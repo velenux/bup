@@ -6,7 +6,7 @@ exec "$bup_python" "$0" ${1+"$@"}
 # end of bup preamble
 import sys
 from bup import options
-from bup import _version
+from bup.config import version
 
 optspec = """
 bup version [--date|--commit|--tag]
@@ -23,38 +23,9 @@ total = (opt.date or 0) + (opt.commit or 0) + (opt.tag or 0)
 if total > 1:
     o.fatal('at most one option expected')
 
-
-def version_date():
-    """Format bup's version date string for output."""
-    return _version.DATE.split(' ')[0]
-
-
-def version_commit():
-    """Get the commit hash of bup's current version."""
-    return _version.COMMIT
-
-
-def version_tag():
-    """Format bup's version tag (the official version number).
-
-    When generated from a commit other than one pointed to with a tag, the
-    returned string will be "unknown-" followed by the first seven positions of
-    the commit hash.
-    """
-    names = _version.NAMES.strip()
-    assert(names[0] == '(')
-    assert(names[-1] == ')')
-    names = names[1:-1]
-    l = [n.strip() for n in names.split(',')]
-    for n in l:
-        if n.startswith('tag: bup-'):
-            return n[9:]
-    return 'unknown-%s' % _version.COMMIT[:7]
-
-
 if opt.date:
-    print version_date()
+    print version['date'].split(' ')[0]
 elif opt.commit:
-    print version_commit()
+    print version['commit']
 else:
-    print version_tag()
+    print version['name']

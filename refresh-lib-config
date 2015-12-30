@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+top="$(pwd -P)"
+
+usage()
+{
+    echo 'Usage: ./refresh-lib-config'
+}
+
+if test "$#" -ne 0; then
+    usage 1>&2; exit 1
+fi
+
+if ! test -f lib/bup/bupsplit.c; then
+    echo 'error: cannot find bup source tree' 1>&2
+    exit 1
+fi
+
+vercfg=lib/bup/config/version
+mancfg=lib/bup/config/mandir
+
+test -d lib/bup/config || mkdir -p lib/bup/config
+
+if test ! -e "$mancfg" || ! cmp <(echo "${top}/Documentation") "$mancfg"; then
+    echo "${top}/Documentation" > "$mancfg"
+fi
+
+tmp="$(mktemp "$top/lib/bup/config/version-XXXXXX")"
+trap "rm -f '$tmp'" EXIT
+git describe --always '--match=[0-9]*' > "$tmp"
+git log -1 --pretty=format:'%H%n' >> "$tmp"
+git log -1 --pretty=format:'%ci%n' >> "$tmp"
+if ! cmp "$tmp" "$vercfg"; then
+    mv "$tmp" "$vercfg"
+fi

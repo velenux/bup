@@ -149,10 +149,20 @@ From source
    destination with DESTDIR and PREFIX.
 
    Files are normally installed to "$DESTDIR/$PREFIX" where DESTDIR is
-   empty by default, and PREFIX is set to /usr.  So if you wanted to
-   install bup to /opt/bup, you might do something like this:
+   empty by default, and PREFIX is set to /usr/local.  To install bup
+   somewhere other than the default, you will normally specify PREFIX:
 
-        make install DESTDIR=/opt/bup PREFIX=''
+        make install PREFIX=/opt/bup
+
+   DESTDIR is largely intended for using during packaging (deb, rpm,
+   etc.), when the install tree is not the final destination.
+
+   Note that install records the MANDIR (converted to an absolute
+   path) in a file named mandir in the install tree.  As a result,
+   moving an install tree will break commands like "bup help".  So if
+   possible, prefer a reinstall.  This also means that the affected
+   commands will not work from a tree installed via DESTDIR, until the
+   tree is finally located at PREFIX.
 
  - The Python executable that bup will use is chosen by ./configure,
    which will search for a reasonable version unless PYTHON is set in

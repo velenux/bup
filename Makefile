@@ -39,8 +39,15 @@ else
   test_tmp := $(CURDIR)/t/tmp
 endif
 
-initial_setup := $(shell ./configure-version --update $(isok))
-initial_setup := $(call shout,$(initial_setup),Version configuration failed))
+refresh := $(shell ./refresh-lib-config $(isok))
+refresh := $(call shout,$(initial_setup),refresh-lib-config failed))
+
+lib_config_files := lib/bup/config/mandir lib/bup/config/version
+
+$(lib_config_files):
+	@echo "Something has gone wrong; $@ should already exist."
+	@echo 'Check "./refresh-lib-config"'
+	@false
 
 config/config.vars: configure config/configure config/configure.inc \
   $(wildcard config/*.in)
@@ -50,7 +57,7 @@ bup_cmds := cmd/bup-python\
   $(patsubst cmd/%-cmd.py,cmd/bup-%,$(wildcard cmd/*-cmd.py)) \
   $(patsubst cmd/%-cmd.sh,cmd/bup-%,$(wildcard cmd/*-cmd.sh))
 
-bup_deps := bup lib/bup/_version.py lib/bup/_helpers$(SOEXT) $(bup_cmds)
+bup_deps := bup lib/bup/_helpers$(SOEXT) $(bup_cmds)
 
 all: $(bup_deps) Documentation/all $(current_sampledata)
 
@@ -115,6 +122,14 @@ install: all
 	$(INSTALL) -pm 0644 \
 		lib/web/*.html \
 		$(dest_libdir)/web/
+	"$(INSTALL)" -d "$(dest_libdir)/bup/config"
+	"$(INSTALL)" -pm 0644 lib/bup/config/version "$(dest_libdir)/bup/config"
+	if test "$(man_roff)"; then \
+	  "$(INSTALL)" -pm 0644 <(echo "$(abspath $(MANDIR))") \
+	    "$(dest_libdir)/bup/config/mandir"; \
+	else \
+	  rm -f $(dest_libdir)/bup/config/mandir; \
+	fi
 
 config/config.h: config/config.vars
 
@@ -125,11 +140,6 @@ lib/bup/_helpers$(SOEXT): \
 	cd lib/bup && \
 	LDFLAGS="$(LDFLAGS)" CFLAGS="$(CFLAGS)" "$(bup_python)" csetup.py build
 	cp lib/bup/build/*/_helpers$(SOEXT) lib/bup/
-
-lib/bup/_version.py:
-	@echo "Something has gone wrong; $@ should already exist."
-	@echo 'Check "./configure-version --update"'
-	@false
 
 t/tmp:
 	mkdir t/tmp
@@ -215,7 +225,10 @@ Documentation/substvars: $(bup_deps)
 	echo "s,%BUP_VERSION%,$$(./bup version --tag),g" > $@
 	echo "s,%BUP_DATE%,$$(./bup version --date),g" >> $@
 
-Documentation/%.1: Documentation/%.md Documentation/substvars
+Documentation/man1:
+	cd Documentation && ln -s . man1
+
+Documentation/%.1: Documentation/%.md Documentation/substvars Documentation/man1
 	$(pf); sed -f Documentation/substvars $< \
 	  | $(PANDOC) -s -r markdown -w man -o $@
 
@@ -225,7 +238,7 @@ Documentation/%.html: Documentation/%.md Documentation/substvars
 
 .PHONY: Documentation/clean
 Documentation/clean:
-	cd Documentation && rm -f *~ .*~ *.[0-9] *.html substvars
+	cd Documentation && rm -f *~ .*~ *.[0-9] *.html man1 substvars
 
 # update the local 'man' and 'html' branches with pregenerated output files, for
 # people who don't have pandoc (and maybe to aid in google searches or something)
@@ -274,7 +287,7 @@ clean: Documentation/clean cmd/bup-python
 	  then umount lib/bup/t/testfs || true; fi
 	rm -rf *.tmp *.tmp.meta t/*.tmp lib/*/*/*.tmp build lib/bup/build lib/bup/t/testfs
 	if test -e t/tmp; then t/force-delete t/tmp; fi
-	./configure-version --clean
 	t/configure-sampledata --clean
+	rm -r lib/bup/config
         # Remove last so that cleanup tools can depend on it
 	rm -f cmd/bup-* cmd/python-cmd.sh
