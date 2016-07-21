@@ -1106,22 +1106,11 @@ class MissingObject(KeyError):
         KeyError.__init__(self, 'object %r is missing' % id.encode('hex'))
 
 
-_ver_warned = 0
 class CatPipe:
     """Link to 'git cat-file' that is used to retrieve blob data."""
-    def __init__(self, repo_dir = None):
-        global _ver_warned
+    def __init__(self, repo_dir=None):
         self.repo_dir = repo_dir
-        wanted = ('1','5','6')
-        if ver() < wanted:
-            if not _ver_warned:
-                log('warning: git version < %s; bup will be slow.\n'
-                    % '.'.join(wanted))
-                _ver_warned = 1
-            self.get = self._slow_get
-        else:
-            self.p = self.inprogress = None
-            self.get = self._fast_get
+        self.p = self.inprogress = None
 
     def _abort(self):
         if self.p:
@@ -1139,7 +1128,7 @@ class CatPipe:
                                   bufsize = 4096,
                                   preexec_fn = _gitenv(self.repo_dir))
 
-    def _fast_get(self, id):
+    def get(self, id):
         if not self.p or self.p.poll() != None:
             self._restart()
         assert(self.p)
@@ -1176,20 +1165,6 @@ class CatPipe:
         except Exception as e:
             it.abort()
             raise
-
-    def _slow_get(self, id):
-        assert(id.find('\n') < 0)
-        assert(id.find('\r') < 0)
-        assert(id[0] != '-')
-        type = _git_capture(['git', 'cat-file', '-t', id]).strip()
-        yield type
-
-        p = subprocess.Popen(['git', 'cat-file', type, id],
-                             stdout=subprocess.PIPE,
-                             preexec_fn = _gitenv(self.repo_dir))
-        for blob in chunkyreader(p.stdout):
-            yield blob
-        _git_wait('git cat-file', p)
 
     def _join(self, it):
         type = it.next()
