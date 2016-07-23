@@ -1128,16 +1128,19 @@ class CatPipe:
                                   bufsize = 4096,
                                   preexec_fn = _gitenv(self.repo_dir))
 
-    def get(self, id):
+    def get(self, id, size=False):
+        """Yield the type of id, or (type, size), if size is true, and then,
+        yield all of the data associated with id.
+        """
+        include_size = size
         if not self.p or self.p.poll() != None:
             self._restart()
         assert(self.p)
         poll_result = self.p.poll()
         assert(poll_result == None)
         if self.inprogress:
-            log('_fast_get: opening %r while %r is open\n'
-                % (id, self.inprogress))
-        assert(not self.inprogress)
+            raise GitError('%r requested while already retrieving %r'
+                           % (id, self.inprogress))
         assert(id.find('\n') < 0)
         assert(id.find('\r') < 0)
         assert(not id.startswith('-'))
@@ -1154,9 +1157,12 @@ class CatPipe:
         (hex, type, size) = spl
 
         it = _AbortableIter(chunkyreader(self.p.stdout, int(spl[2])),
-                           onabort = self._abort)
+                            onabort = self._abort)
         try:
-            yield type
+            if include_size:
+                yield type, size
+            else:
+                yield type
             for blob in it:
                 yield blob
             readline_result = self.p.stdout.readline()
