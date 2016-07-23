@@ -2,6 +2,7 @@
 
 from collections import namedtuple
 from ctypes import sizeof, c_void_p
+from itertools import chain, islice
 from os import environ
 from contextlib import contextmanager
 import sys, os, pwd, subprocess, errno, socket, select, mmap, stat, re, struct
@@ -20,6 +21,11 @@ if sc_arg_max == -1:  # "no definite limit" - let's choose 2M
 # want options.py to be standalone so people can include it in other projects.
 from bup.options import _tty_width
 tty_width = _tty_width
+
+
+def partition(iterable, n):
+    for item in iterable:
+        yield chain((item,), islice(iterable, 0, n - 1))
 
 
 def atoi(s):

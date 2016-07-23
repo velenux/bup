@@ -109,7 +109,7 @@ def report_live_item(n, total, ref_name, ref_id, item):
         log('%s %s:%s%s\n' % (status, hex_id, ps, dirslash))
 
 
-def find_live_objects(existing_count, cat_pipe, opt):
+def find_live_objects(existing_count, opt):
     prune_visited_trees = True # In case we want a command line option later
     pack_dir = git.repo('objects/pack')
     ffd, bloom_filename = tempfile.mkstemp('.bloom', 'tmp-gc-', pack_dir)
@@ -123,7 +123,7 @@ def find_live_objects(existing_count, cat_pipe, opt):
         stop_at = lambda (x): x.decode('hex') in trees_visited
     approx_live_count = 0
     for ref_name, ref_id in git.list_refs():
-        for item in walk_object(cat_pipe, ref_id.encode('hex'),
+        for item in walk_object(ref_id.encode('hex'),
                                 stop_at=stop_at,
                                 include_data=None):
             # FIXME: batch ids
@@ -252,7 +252,7 @@ if opt.threshold:
 
 git.check_repo_or_die()
 
-cat_pipe = vfs.cp()
+cat_pipe = git.cp()
 existing_count = count_objects(git.repo('objects/pack'))
 if opt.verbose:
     log('found %d objects\n' % existing_count)
@@ -261,7 +261,7 @@ if not existing_count:
         log('nothing to collect\n')
 else:
     try:
-        live_objects = find_live_objects(existing_count, cat_pipe, opt)
+        live_objects = find_live_objects(existing_count, opt)
     except MissingObject as ex:
         log('bup: missing object %r \n' % ex.id.encode('hex'))
         sys.exit(1)

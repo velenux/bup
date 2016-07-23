@@ -11,7 +11,7 @@ from bup import _helpers, hashsplit, path, midx, bloom, xstat
 from bup.helpers import (Sha1, add_error, chunkyreader, debug1, debug2,
                          fdatasync,
                          hostname, localtime, log, merge_iter,
-                         mmap_read, mmap_readwrite,
+                         mmap_read, mmap_readwrite, partition,
                          progress, qprogress, unlink, username, userfullname,
                          utc_offset_str)
 
@@ -1204,18 +1204,82 @@ class CatPipe:
             log('booger!\n')
 
 
+class InfoPipe:
+    """Maintains a 'git cat-file --batch-check' subprocess that can be
+    used used to retrieve object info.
+    """
+
+    def __init__(self, repo_dir=None):
+        self.repo_dir = repo_dir
+        self.inbatch = False
+        self.p = subprocess.Popen(['git', 'cat-file', '--batch-check'],
+                                  stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE,
+                                  close_fds = True,
+                                  bufsize = 4096,
+                                  preexec_fn = _gitenv(self.repo_dir))
+
+    def close(self):
+        p, self.p = self.p, None
+        if p:
+            p.stdout.close()
+            p.stdin.close()
+            rv = p.wait()
+        self.inbatch = False
+        if p and rv != 0:
+            raise GitError('InfoPipe returned %d' % rv)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return None
+
+    def get(self, ids):
+        """Yield (type, size) for each id in ids, or None if id is missing.
+        The results must be fully consumed before issuing another
+        get().
+        """
+        assert(not isinstance(ids, basestring))
+        if self.inbatch:
+            raise GitError('get() already in progress')
+        self.inbatch = True
+        for batch in partition(ids, 11):
+            batch = list(batch)
+            for id in batch:
+                assert('\n' not in id)
+                assert('\r' not in id)
+                assert(not id.startswith('-'))
+                self.p.stdin.write('%s\n' % id)
+            self.p.stdin.flush()
+            for id in batch:
+                hdr = self.p.stdout.readline()
+                if hdr.endswith(' missing\n'):
+                    yield None
+                spl = hdr.split(' ')
+                if len(spl) != 3 or len(spl[0]) != 40:
+                    raise GitError('expected blob, got %r' % spl)
+                hex, type, size = spl
+                yield type, size
+        self.inbatch = False
+
+
 _cp = {}
 
-def cp(repo_dir=None):
+def cp(repo_dir=None, include_data=True):
     """Create a CatPipe object or reuse the already existing one."""
     global _cp
     if not repo_dir:
         repo_dir = repo()
     repo_dir = os.path.abspath(repo_dir)
-    cp = _cp.get(repo_dir)
+    cp = _cp.get((repo_dir, include_data))
     if not cp:
-        cp = CatPipe(repo_dir)
-        _cp[repo_dir] = cp
+        if include_data:
+            cp = CatPipe(repo_dir=repo_dir)
+        else:
+            cp = InfoPipe(repo_dir=repo_dir)
+        _cp[(repo_dir, include_data)] = cp
     return cp
 
 
@@ -1245,8 +1309,8 @@ WalkItem = namedtuple('WalkItem', ['id', 'type', 'mode',
 #   ...
 
 
-def _walk_object(cat_pipe, id,
-                 parent_path, chunk_path,
+def _walk_object(info_cp, data_cp,
+                 id, parent_path, chunk_path,
                  mode=None,
                  stop_at=None,
                  include_data=None):
@@ -1254,21 +1318,23 @@ def _walk_object(cat_pipe, id,
     if stop_at and stop_at(id):
         return
 
-    item_it = cat_pipe.get(id)  # FIXME: use include_data
-    type = item_it.next()
-
+    item_it = info_cp.get([id])
+    for item in item_it:
+        if not item:
+            raise MissingObject(id.decode('hex'))
+        type, size = item
     if type not in ('blob', 'commit', 'tree'):
         raise Exception('unexpected repository object type %r' % type)
 
-    # FIXME: set the mode based on the type when the mode is None
-
     if type == 'blob' and not include_data:
-        # Dump data until we can ask cat_pipe not to fetch it
-        for ignored in item_it:
-            pass
         data = None
     else:
+        item_it = data_cp.get(id)
+        dup_type = item_it.next()
+        assert(type == dup_type)
         data = ''.join(item_it)
+
+    # FIXME: set the mode based on the type when the mode is None
 
     yield  WalkItem(id=id, type=type,
                     chunk_path=chunk_path, path=parent_path,
@@ -1278,14 +1344,16 @@ def _walk_object(cat_pipe, id,
     if type == 'commit':
         commit_items = parse_commit(data)
         tree_id = commit_items.tree
-        for x in _walk_object(cat_pipe, tree_id, parent_path, chunk_path,
+        for x in _walk_object(info_cp, data_cp,
+                              tree_id, parent_path, chunk_path,
                               mode=hashsplit.GIT_MODE_TREE,
                               stop_at=stop_at,
                               include_data=include_data):
             yield x
         parents = commit_items.parents
         for pid in parents:
-            for x in _walk_object(cat_pipe, pid, parent_path, chunk_path,
+            for x in _walk_object(info_cp, data_cp,
+                                  pid, parent_path, chunk_path,
                                   mode=mode, # Same mode as this child
                                   stop_at=stop_at,
                                   include_data=include_data):
@@ -1302,7 +1370,8 @@ def _walk_object(cat_pipe, id,
                     sub_chunk_path = ['']
                 else:
                     sub_chunk_path = chunk_path
-            for x in _walk_object(cat_pipe, ent_id.encode('hex'),
+            for x in _walk_object(info_cp, data_cp,
+                                  ent_id.encode('hex'),
                                   sub_path, sub_chunk_path,
                                   mode=mode,
                                   stop_at=stop_at,
@@ -1310,14 +1379,17 @@ def _walk_object(cat_pipe, id,
                 yield x
 
 
-def walk_object(cat_pipe, id,
+def walk_object(id,
+                repo_dir=None,
                 stop_at=None,
                 include_data=None):
-    """Yield everything reachable from id via cat_pipe as a WalkItem,
+    """Yield everything reachable from id in repo_dir as a WalkItem,
     stopping whenever stop_at(id) returns true.  Throw MissingObject
     if a hash encountered is missing from the repository.
-
     """
-    return _walk_object(cat_pipe, id, [], [],
+    info_cp = cp(repo_dir=repo_dir, include_data=False)
+    data_cp = cp(repo_dir=repo_dir, include_data=True)
+    return _walk_object(info_cp, data_cp,
+                        id, [], [],
                         stop_at=stop_at,
                         include_data=include_data)
