@@ -82,7 +82,7 @@ fi
 
 if test $(wc -l < "$tmpfile") != 0; then
     echo "Differences between $src and $dest" 1>&2
-    cat "$tmpfile"
+    cat "$tmpfile" | sort -k2b
     exit 1
 fi
 
